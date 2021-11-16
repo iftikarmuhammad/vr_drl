@@ -139,7 +139,7 @@ def run(t, s, ue, plot, result_dir):
 
     time_duration = []
 
-    v_array = [rn.uniform(10**-4, 1) for i in range(0,nu)]   # randomize head velocity for initial testing
+    # v_array = [rn.uniform(10**-4, 1) for i in range(0,nu)]   # randomize head velocity for initial testing
 
     for episode in range(NUM_EPISODES):
         episode_reward = 0
@@ -273,4 +273,4 @@ def run(t, s, ue, plot, result_dir):
         plt.close(fig)
     return avg_e, avg_ue_e
 
-print(run(300, 3, 3, True, 'result/test/'))
+print(run(300, 1, 3, True, 'result/test/'))

@@ -64,7 +64,7 @@ class DeepQNetwork(Model):
         nextStates = self.memories_dict["next_state"][random_select]
 
         with tf.GradientTape() as tape:
-            q_eval_arr = self.evaluation_network(states) 
+            q_eval_arr = self.evaluation_network(states)
             q_eval = tf.reduce_max(q_eval_arr,axis=1)
             # print("q_eval: {}".format(q_eval))
             if self.enable_DDQN == True:

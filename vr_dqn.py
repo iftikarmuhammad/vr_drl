@@ -146,7 +146,7 @@ def run(t, s, ue, plot, result_dir):
         episode_q = 0
         # state = env.reset()
 
-        for i in range(n-1):  # Time frames looping
+        for i in range(n-2):  # Time frames looping
             if epsilon > FINAL_EPSILON:
                 epsilon -= (INITIAL_EPSILON-FINAL_EPSILON)/EPSILON_DECAY
 
@@ -155,6 +155,9 @@ def run(t, s, ue, plot, result_dir):
             i_idx = (i + (episode * n)) % split_idx
 
             v_array = list(v_df.iloc[i])
+            # print(v_array)
+
+            # v_array = [rn.uniform(10**-4, 1) for i in range(0,nu)]
             
             state = (all_sub[0][i_idx,:], v_array)                             # state = channel gain + head velocity
 
@@ -176,7 +179,8 @@ def run(t, s, ue, plot, result_dir):
             # print(env_dict['overfill'])
             reward = -sum(env_dict['energy'])
             # print(reward)
-            v_array = [rn.uniform(10**-4, 1) for i in range(0,nu)]
+            # print(i)
+            v_array = list(v_df.iloc[i+1])
             next_state = (all_sub[0][i_idx+1,:], v_array)
             next_state = tf.expand_dims(next_state,0)
 
@@ -269,4 +273,4 @@ def run(t, s, ue, plot, result_dir):
         plt.close(fig)
     return avg_e, avg_ue_e
 
-print(run(10, 3, 3, True, 'result/test/'))
+print(run(300, 3, 3, True, 'result/test/'))

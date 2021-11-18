@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 
-log_path = os.getcwd() + "/result/211110_1701/"
+log_path = os.getcwd() + "/result/211117_2235/"
 
 # local = pd.read_csv(log_path + "MovingAverageReward_lc_energy.csv")
 

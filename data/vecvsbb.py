@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import numpy.polynomial.polynomial as poly
+import math
 
 vec_df = pd.read_csv('ang_vec/ang_vec_3users.csv')
 bb_df1 = pd.read_csv('video3user1_notpredict_blackborder.csv', header=None)
@@ -28,7 +29,7 @@ for i in range(0,3):
     user = 'user%s'%str(i+1)
 
     y = bb_df.iloc[i][:299]
-    x = vec_df[user].abs()
+    x = vec_df[user].abs() * 180/math.pi
 
     lin = poly.polyfit(x, y, 1)
     quad = poly.polyfit(x, y, 2)
@@ -43,8 +44,8 @@ for i in range(0,3):
     x = np.arange(x2,step=0.1)
     plt.plot(x, lin_f(x), color='r', label='Linear regression')
     plt.plot(x, quad_f(x), color='b', label='Quadratic regression')
-    if i!=2:
-        plt.axis((0,2,y1,y2))
+    # if i!=2:
+    #     plt.axis((0,2,y1,y2))
     plt.title('Blackborder vs Angular Velocity User %s' %str(i+1))
     plt.ylabel('Blackborder Pct (%)')
     plt.xlabel('Angular Velocity (rad/s)')

@@ -9,7 +9,7 @@ def robust_overfilling(input_orientation, prediction, input_projection, offset =
     IPDy = input_projection[1]-input_projection[3]
 
     #Define projection distance to the user
-    h = 1000
+    h = 1
 
     #Get the corner point distance to the rotation center for each side in x,y coordinate
     rx = np.sqrt(h**2+1/4*IPDx**2)
@@ -23,6 +23,9 @@ def robust_overfilling(input_orientation, prediction, input_projection, offset =
     pitch_diff = (prediction[0]-input_orientation[0])
     roll_diff = (prediction[1]-input_orientation[1])
     yaw_diff = (prediction[2]-input_orientation[2])
+    # print("pitch: %s"%pitch_diff)
+    # print("roll: %s"%roll_diff)
+    # print("yaw: %s"%yaw_diff)
 
     #Calculate predicted margin based on translation movement
     x_r = max(input_projection[2],rx*abs(np.sin(input_anglex-yaw_diff)))
@@ -41,27 +44,37 @@ def robust_overfilling(input_orientation, prediction, input_projection, offset =
     p_l = x_l+x_ll+IPDx/2
     p_t = y_t+y_tt-IPDy/2
     p_b = y_b+y_bb+IPDy/2
+    # print(p_r, p_l, p_t, p_b)
 
-    'Enhancement'
-    # Calculate margin based on genrated area
-    margin = np.sqrt((p_r-p_l)*(p_t-p_b)*offset)/2
-    p_l = -(margin+np.sin(yaw_diff))+(input_projection[0]+1)
-    p_t = margin+np.sin(pitch_diff)+(input_projection[1]-1)
-    p_r = margin-np.sin(yaw_diff)+(input_projection[2]-1)
-    p_b = -(margin-np.sin(pitch_diff))+(input_projection[3]+1)
+    # x = (p_l, 0, p_r, 0)
+    # y = (0, p_t, 0, p_b)
 
-    'Enhancement ver 2'
-    # Get dilation on high velocity
-    p_r = max(p_r*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_r*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
-    p_l = min(p_l*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_l*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
-    p_t = max(p_t*(np.sin(abs(pitch_diff))*(fixed_param-1)+1),p_t*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
-    p_b = min(p_b*(np.sin(abs(pitch_diff))*(fixed_param-1)+1), p_b*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
-    # return [-np.abs(p_l),np.abs(p_t),np.abs(p_r),-np.abs(p_b)]
+    # x = (-0.8, -0.8, 0.8, 0.8)
+    # y = (-0.72, 0.72, 0.72, -0.72)
 
-    x = (p_l, 0, p_r, 0)
-    y = (0, p_t, 0, p_b)
-    area = 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
-    return area
+    x = (p_l, p_l, p_r, p_r)
+    y = (p_b, p_t, p_t, p_b)
+
+    # input_projection = [-0.800, 0.720, 0.800, -0.720]
+
+    # 'Enhancement'
+    # # Calculate margin based on genrated area
+    # margin = np.sqrt((p_r-p_l)*(p_t-p_b)*offset)/2
+    # p_l = -(margin+np.sin(yaw_diff))+(input_projection[0]+1)
+    # p_t = margin+np.sin(pitch_diff)+(input_projection[1]-1)
+    # p_r = margin-np.sin(yaw_diff)+(input_projection[2]-1)
+    # p_b = -(margin-np.sin(pitch_diff))+(input_projection[3]+1)
+
+    # 'Enhancement ver 2'
+    # # Get dilation on high velocity
+    # p_r = max(p_r*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_r*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
+    # p_l = min(p_l*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_l*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
+    # p_t = max(p_t*(np.sin(abs(pitch_diff))*(fixed_param-1)+1),p_t*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
+    # p_b = min(p_b*(np.sin(abs(pitch_diff))*(fixed_param-1)+1), p_b*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
+    return [-np.abs(p_l),np.abs(p_t),np.abs(p_r),-np.abs(p_b)]
+
+    # area = 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+    # return area
 
 def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_array):
     loc = ind                   # locator of the indices of the channel gains h
@@ -90,12 +103,12 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
     lmd = 1                              # L/r < d coefficient
     Pl = 10 * 10**-5                     # local computing power
     Po = 0.1 * 10**-5	                 # offload computing power
-    k_coef = [100, 200, 300, 500, 3000]      # range [10,50,100,200,300]ms  
+    k_coef = [1000, 2000, 3000, 4000, 5000]      # range [10,50,100,200,300]ms  
 
     k = [k_coef[action[i]] for i in range(0,len(action)) if i%2]               # playout delay
     sub = np.array([action[i] for i in range(0,len(action)) if not i%2])    # allocated sub-carriers
 
-    input_projection = [-800, 720, 800, -720]
+    input_projection = [-0.800, 0.720, 0.800, -0.720]
 
     out_dict = defaultdict(list)
 
@@ -107,13 +120,10 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
             e = Pl * L
             ovf = 0
             d_bound = 0
-            opt_area = L
             Li = L
-            bb = 0
+            bb = 0.3
         else:
-            prediction = [current_a_array[i], current_a_array[i+1], current_a_array[i+2]]
-            input_orientation = [prev_a_array[i], prev_a_array[i+1], prev_a_array[i+2]]
-            opt_area = robust_overfilling(input_orientation , prediction, input_projection)
+            # Energy Consumption Calculation
             cur_sub = np.array(all_sub[s-1])  # we use s-1 because our sub-carrier array counts from zero
             h = cur_sub[loc, :]
             s_power = h[n] * p  # signal power computed. this is the numerator of the signal_to_noise
@@ -129,6 +139,7 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
                     else:
                         noise = noise+0.0
             signal_to_noise = s_power/noise
+            # print(signal_to_noise)
             e2 = math.log(1+signal_to_noise)
             ro = b * e2/e1
             r = wi[n]*ro
@@ -137,7 +148,18 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
             d_bound = (Li / r) - d
 
             e = Po * Li + lmd * d_bound
-            bb = abs(Li - opt_area)
+
+            # Black border Calculation
+            prediction = [current_a_array[i], current_a_array[i+1], current_a_array[i+2]]
+            input_orientation = [prev_a_array[i], prev_a_array[i+1], prev_a_array[i+2]]
+            opt_coor = robust_overfilling(input_orientation , prediction, input_projection)
+            alg_coor = np.array(input_projection) * (1 + ovf)
+            bb_coor = np.abs(opt_coor) - np.abs(alg_coor)
+            bb_coor = np.clip(bb_coor, 0, None)
+            bb = np.mean(bb_coor)
+                # print('k : %s'%k[n])
+                # print('Optimal : %s'%opt_coor)
+                # print('Algorithm : %s'%alg_coor)
         i+=1
         out_dict['x'].append(s)         
         out_dict['rate'].append(r)      # transmission rate
@@ -145,7 +167,7 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
         out_dict['overfill'].append(ovf)
         out_dict['k_coef'].append(k[n])
         out_dict['delay_bound'].append(d_bound)
-        out_dict['optimal_area'].append(opt_area)
+        # out_dict['optimal_area'].append(opt_area)
         out_dict['overfill_area'].append(Li)
         out_dict['blackborder'].append(bb)
         out_dict['L'].append(L)

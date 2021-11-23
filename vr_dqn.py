@@ -10,6 +10,7 @@ import math
 from datetime import datetime
 from matplotlib.ticker import MaxNLocator
 from collections import defaultdict
+from sklearn.preprocessing import StandardScaler
 
 from dqn import DeepQNetwork
 from vr_env import step
@@ -68,20 +69,28 @@ def run(t, s, ue, plot, result_dir):
     TARGET_UPDATE_CYCLE = 1
     epsilon = INITIAL_EPSILON
 
-    w1 = 1
-    w2 = 10**-5
-    # w2 = 1
+    w1 = 0
+    w2 = 1
 
     RESULT_DIR = datetime.now().strftime("%y%m%d_%H%M")
 
-    k = [100, 200, 300, 500, 3000]     # overfill constant
+    k = 5    # overfill constant
 
     # Load data
     channel = sio.loadmat('data/ch_gain/data_%d' % 10)['input_h']
     channel = channel * 1000000
 
     v_df = pd.read_csv('data/ang_vec/ang_vec_3users.csv')
-    v_df = v_df.clip(-4, 4)
+    vstd_df = v_df                                          # standardized/normalized angular velocity
+    v_df = v_df.clip(-4,4)
+
+    for i in range(nu):
+        user = 'user%s'%str(i+1)
+        scaler = StandardScaler()
+        median = vstd_df.loc[(v_df[user]<4) & vstd_df[user] >-4, user].median()
+        vstd_df[user] = vstd_df[user].mask(vstd_df[user]>4, median)
+        vstd_df[user] = vstd_df[user].mask(vstd_df[user]<-4, median)
+        vstd_df[user] = scaler.fit_transform(vstd_df[user].values.reshape(-1,1))
 
     a_df = pd.read_csv('data/ang/ang_3users.csv')
     a_df = a_df.clip(-2*math.pi, 2*math.pi)
@@ -116,13 +125,23 @@ def run(t, s, ue, plot, result_dir):
         start = end
         end = end+sub_range
 
-    all_subs = [x / 1000000 for x in all_sub]    # all_subs used for computation rate calculation
+    all_subs = [x/1000000 for x in all_sub]    # all_subs used for computation rate calculation
     split_idx = int(len(adj_channel))//SUB_NUM  # training data indices
+
+    ch_df = pd.DataFrame(all_sub[0])
+
+    # print(ch_df)
+
+    for i in range(nu):
+        scaler = StandardScaler()
+        ch_df[i] = scaler.fit_transform(ch_df[i].values.reshape(-1,1))
+
+    # print(ch_df)
 
     discrete_action = True
 
     if discrete_action:
-        out_size = pow(SUB_NUM+1, nu) * pow(len(k), nu)
+        out_size = pow(SUB_NUM+1, nu) * pow(k, nu)
 
     network = DeepQNetwork(net=[(nu,2), 120, 80, out_size], # Input layer (nu), 120 and 80 neurons of hidden layers and output layer (nu)
                     learning_rate=0.01,
@@ -133,7 +152,7 @@ def run(t, s, ue, plot, result_dir):
                     enable_DDQN = False
                     )
 
-    action_space = [SUB_NUM if i%2 else len(k)-1 for i in range(1,2*nu+1)]
+    action_space = [SUB_NUM if i%2 else k-1 for i in range(1,2*nu+1)]
     # print(action_space)
     possible_actions = [list(range(0, (k + 1))) for k in action_space]
 
@@ -153,7 +172,6 @@ def run(t, s, ue, plot, result_dir):
     for episode in range(NUM_EPISODES):
         episode_reward = 0
         episode_q = 0
-        # state = env.reset()
 
         for i in range(n-2):  # Time frames looping
             if epsilon > FINAL_EPSILON:
@@ -162,8 +180,10 @@ def run(t, s, ue, plot, result_dir):
             start_time = tm.time()
             
             i_idx = (i + (episode * n)) % split_idx
-
+            vstd_array = list(vstd_df.iloc[i])
             v_array = list(v_df.iloc[i])
+            ch_array = list(ch_df.iloc[i_idx])
+            result_dict['velocity'].append(np.array(v_array))
 
             if i >= delay_idx:
                 prev_a_array = list(a_df.iloc[i-delay_idx])
@@ -172,7 +192,12 @@ def run(t, s, ue, plot, result_dir):
 
             current_a_array = list(a_df.iloc[i])
             
-            state = (all_sub[0][i_idx,:], v_array)                             # state = channel gain + head velocity
+            # state = (all_sub[0][i_idx,:], v_array)                             # state = channel gain + head velocity
+            state = (ch_array, vstd_array)
+
+            # print(state)
+            # print('channel gain : %s'%ch_array)
+            # print('ang vel : %s' % v_array)
 
             state = tf.expand_dims(state,0)
 
@@ -191,8 +216,9 @@ def run(t, s, ue, plot, result_dir):
             # print('bb : %s' % (w2 * sum(env_dict['blackborder'])))
             reward = -w1 * sum(env_dict['energy']) - w2 * sum(env_dict['blackborder'])
 
-            v_array = list(v_df.iloc[i+1])
-            next_state = (all_sub[0][i_idx+1,:], v_array)
+            vstd_array = list(vstd_df.iloc[i+1])
+            ch_array = list(ch_df.iloc[i_idx+1])
+            next_state = (ch_array, vstd_array)
             next_state = tf.expand_dims(next_state,0)
 
             network.append_experience({'state':state,
@@ -226,6 +252,22 @@ def run(t, s, ue, plot, result_dir):
     rwd_df['mean'] = rolling_mean
     rwd_df['std_high'] = rolling_mean + rolling_std
     rwd_df['std_low'] = rolling_mean - rolling_std
+
+    # for i in range(0, len(result_dict['L'][0])):
+    #     fig, ax = plt.subplots()
+    #     ax.grid(True)
+    #     # plt.plot(np.array(result_dict['L'])[:,i], color='b', label='Original')
+    #     # plt.plot(np.array(result_dict['optimal_area'])[:,i], color='r', label='Calculated')
+    #     plt.plot(np.array(result_dict['velocity'])[-290:,i], color='C%s'%i, label='Velocity')
+    #     # plt.plot(np.array(result_dict['velocity'])[:,i], color='r', label='Calculated')
+    #     plt.title('Overfill Area User %s' %str(i+1))
+    #     plt.xlabel('Timestep')
+    #     plt.ylabel('Area (Pixels)')
+    #     plt.legend(loc='upper right')
+    #     # plt.savefig(result_dir + 'area_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+    #     plt.show()
+    #     # plt.close(fig)
+
 
     if plot:
         for i in range(0, len(result_dict['x'][0])):
@@ -273,19 +315,32 @@ def run(t, s, ue, plot, result_dir):
             # plt.show()
             plt.close(fig)
 
-        for i in range(0, len(result_dict['L'][0])):
+        for i in range(0, len(result_dict['blackborder'][0])):
             fig, ax = plt.subplots()
             ax.grid(True)
-            plt.plot(ma(np.array(result_dict['L'])[:,i], n), color='b', label='Original')
-            plt.plot(ma(np.array(result_dict['Li'])[:,i], n), color='C%s'%i, label='Algorithm')
-            plt.plot(ma(np.array(result_dict['optimal_area'])[:,i], n), color='r', label='Calculated')
-            plt.title('Overfill Area User %s' %str(i+1))
+            plt.plot(ma(np.array(result_dict['blackborder'])[:,i], n), color='C%s'%i)
+            # plt.plot(np.array(result_dict['blackborder'])[:,i], color='C%s'%i)
+            plt.title('Black Border User %s' %str(i+1))
             plt.xlabel('Timestep')
-            plt.ylabel('Area (Pixels)')
-            plt.legend(loc='upper right')
-            plt.savefig(result_dir + 'area_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.ylabel('Black border')
+            plt.savefig(result_dir + 'blackborder_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
+
+
+        # for i in range(0, len(result_dict['L'][0])):
+        #     fig, ax = plt.subplots()
+        #     ax.grid(True)
+        #     plt.plot(ma(np.array(result_dict['L'])[:,i], n), color='b', label='Original')
+        #     plt.plot(ma(np.array(result_dict['Li'])[:,i], n), color='C%s'%i, label='Algorithm')
+        #     plt.plot(ma(np.array(result_dict['optimal_area'])[:,i], n), color='r', label='Calculated')
+        #     plt.title('Overfill Area User %s' %str(i+1))
+        #     plt.xlabel('Timestep')
+        #     plt.ylabel('Area (Pixels)')
+        #     plt.legend(loc='upper right')
+        #     plt.savefig(result_dir + 'area_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+        #     # plt.show()
+        #     plt.close(fig)
 
         fig, ax = plt.subplots()
         plt.plot(rwd_df['mean'], c='C0')
@@ -298,4 +353,4 @@ def run(t, s, ue, plot, result_dir):
         plt.close(fig)
     return avg_e, avg_ue_e
 
-# print(run(300, 3, 3, True, 'result/test/'))
+print(run(300, 3, 3, True, 'result/test/'))

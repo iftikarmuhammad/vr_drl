@@ -6,6 +6,7 @@ import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import math
+import os
 
 from datetime import datetime
 from matplotlib.ticker import MaxNLocator
@@ -49,7 +50,7 @@ def generate_actions(possible_actions):
     possible_action_vectors = generate_actions(new_possible_actions)
     return possible_action_vectors
 
-def run(t, s, ue, plot, result_dir):
+def run(eps, t, s, ue, plot, result_dir):
 
     # This algorithm generates K modes from DNN, and chooses with largest
     # reward. The mode with largest reward is stored in the memory, which is
@@ -61,7 +62,7 @@ def run(t, s, ue, plot, result_dir):
     SUB_NUM = s
     PLAYOUT_DELAY = 0.1
 
-    NUM_EPISODES = 100
+    NUM_EPISODES = eps
     INITIAL_EPSILON = 0.4
     FINAL_EPSILON = 0.01
     EPSILON_DECAY = 3*n*NUM_EPISODES/4
@@ -69,10 +70,13 @@ def run(t, s, ue, plot, result_dir):
     TARGET_UPDATE_CYCLE = 1
     epsilon = INITIAL_EPSILON
 
-    w1 = 0
-    w2 = 1
+    w1 = 1
+    # w2 = 1
+    w2 = 100
 
     RESULT_DIR = datetime.now().strftime("%y%m%d_%H%M")
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
 
     k = 5    # overfill constant
 
@@ -87,13 +91,25 @@ def run(t, s, ue, plot, result_dir):
     for i in range(nu):
         user = 'user%s'%str(i+1)
         scaler = StandardScaler()
-        median = vstd_df.loc[(v_df[user]<4) & vstd_df[user] >-4, user].median()
+        median = vstd_df.loc[(vstd_df[user]<4) & vstd_df[user] >-4, user].median()
         vstd_df[user] = vstd_df[user].mask(vstd_df[user]>4, median)
         vstd_df[user] = vstd_df[user].mask(vstd_df[user]<-4, median)
         vstd_df[user] = scaler.fit_transform(vstd_df[user].values.reshape(-1,1))
 
+    a_d = {}
+
     a_df = pd.read_csv('data/ang/ang_3users.csv')
     a_df = a_df.clip(-2*math.pi, 2*math.pi)
+
+    for i in range(nu):
+        user = 'user%s'%str(i+1)
+        a_d[user] = a_df[[user+'r', user+'p', user+'y']].mean(axis=1)
+        astd_df = pd.DataFrame(a_d)
+        scaler = StandardScaler()
+        median = astd_df.loc[(astd_df[user]<(2*math.pi)) & astd_df[user] >(-2*math.pi), user].median()
+        astd_df[user] = astd_df[user].mask(astd_df[user]>(2*math.pi), median)
+        astd_df[user] = astd_df[user].mask(astd_df[user]<(-2*math.pi), median)
+        astd_df[user] = scaler.fit_transform(astd_df[user].values.reshape(-1,1))
 
     # print(len(channel))
     adj_channel = []        #adjust
@@ -143,7 +159,7 @@ def run(t, s, ue, plot, result_dir):
     if discrete_action:
         out_size = pow(SUB_NUM+1, nu) * pow(k, nu)
 
-    network = DeepQNetwork(net=[(nu,2), 120, 80, out_size], # Input layer (nu), 120 and 80 neurons of hidden layers and output layer (nu)
+    network = DeepQNetwork(net=[(nu,4), 120, 80, out_size], # Input layer (nu), 120 and 80 neurons of hidden layers and output layer (nu)
                     learning_rate=0.01,
                     batch_size=64,
                     training_cycle = TRAINING_CYCLE,
@@ -171,60 +187,65 @@ def run(t, s, ue, plot, result_dir):
 
     for episode in range(NUM_EPISODES):
         episode_reward = 0
-        episode_q = 0
 
         for i in range(n-2):  # Time frames looping
             if epsilon > FINAL_EPSILON:
                 epsilon -= (INITIAL_EPSILON-FINAL_EPSILON)/EPSILON_DECAY
 
             start_time = tm.time()
-            
-            i_idx = (i + (episode * n)) % split_idx
+
+            # i_idx = (i + (episode * n)) % split_idx
+
             vstd_array = list(vstd_df.iloc[i])
+            astd_array = list(astd_df.iloc[i])
             v_array = list(v_df.iloc[i])
-            ch_array = list(ch_df.iloc[i_idx])
+            ch_array = list(ch_df.iloc[i])
+
             result_dict['velocity'].append(np.array(v_array))
 
             if i >= delay_idx:
                 prev_a_array = list(a_df.iloc[i-delay_idx])
+                prev_asdt_array = list(astd_df.iloc[i-delay_idx])
             else:
                 prev_a_array = list(a_df.iloc[0])
+                prev_asdt_array = list(astd_df.iloc[0])
 
             current_a_array = list(a_df.iloc[i])
             
-            # state = (all_sub[0][i_idx,:], v_array)                             # state = channel gain + head velocity
-            state = (ch_array, vstd_array)
-
-            # print(state)
-            # print('channel gain : %s'%ch_array)
-            # print('ang vel : %s' % v_array)
+            state = (ch_array, vstd_array, astd_array, prev_asdt_array)
 
             state = tf.expand_dims(state,0)
 
             if np.random.uniform() < epsilon:
-                # print('EPSILON')
                 action = rn.randint(0,out_size-1)
             else:
-                # print('NETWORK')
                 tmp = network.evaluation_network(state)
-                # print(tmp)
                 action = tf.argmax(tmp[0])
 
             action_q = action_map[action]
-            env_dict = step(i_idx, action_q, SUB_NUM, ue, b, all_subs, v_array, prev_a_array, current_a_array)
+            env_dict = step(i, action_q, SUB_NUM, ue, b, all_subs, v_array, prev_a_array, current_a_array)
             # print('energy : %s' % sum(env_dict['energy']))
-            # print('bb : %s' % (w2 * sum(env_dict['blackborder'])))
+            # print('bb : %s' % (w2  * sum(env_dict['blackborder'])))
+
             reward = -w1 * sum(env_dict['energy']) - w2 * sum(env_dict['blackborder'])
 
             vstd_array = list(vstd_df.iloc[i+1])
-            ch_array = list(ch_df.iloc[i_idx+1])
-            next_state = (ch_array, vstd_array)
+            ch_array = list(ch_df.iloc[i+1])
+            astd_array = list(astd_df.iloc[i+1])
+
+            if i >= delay_idx:
+                prev_a_array = list(a_df.iloc[i-delay_idx+1])
+                prev_asdt_array = list(astd_df.iloc[i-delay_idx+1])
+            else:
+                prev_a_array = list(a_df.iloc[0])
+                prev_asdt_array = list(astd_df.iloc[0])
+
+            next_state = (ch_array, vstd_array, astd_array, prev_asdt_array)
             next_state = tf.expand_dims(next_state,0)
 
             network.append_experience({'state':state,
             'action':[action],'reward':[reward],'next_state': next_state})
             episode_reward += reward
-            episode_q += sum(env_dict['rate'])
 
             if network.training_counter >= network.training_cycle:
                 network.train()
@@ -237,14 +258,51 @@ def run(t, s, ue, plot, result_dir):
                 result_dict[k].append(v)
                 result_dict['sum_' + k].append(sum(v))
 
+            result_dict['sum_reward'].append(reward)
+
         print('Episode {} finished after {} timesteps, total rewards {}, epsilon {}'.format(episode, t+1, episode_reward, epsilon))
         total_rwd.append(episode_reward/n)
 
-    avg_ue_r = np.mean(result_dict['rate'], axis=0)
-    avg_ue_e = np.mean(result_dict['energy'], axis=0)
+    eval_dict = defaultdict(list)
+    evaluation = True
 
-    avg_r = sum(result_dict['sum_rate'])/(NUM_EPISODES * n)
+    if evaluation:
+        for i in range(n-2):
+            vstd_array = list(vstd_df.iloc[i])
+            astd_array = list(astd_df.iloc[i])
+            v_array = list(v_df.iloc[i])
+            ch_array = list(ch_df.iloc[i])
+
+            result_dict['velocity'].append(np.array(v_array))
+
+            if i >= delay_idx:
+                prev_a_array = list(a_df.iloc[i-delay_idx])
+                prev_asdt_array = list(astd_df.iloc[i-delay_idx])
+            else:
+                prev_a_array = list(a_df.iloc[0])
+                prev_asdt_array = list(astd_df.iloc[0])
+            current_a_array = list(a_df.iloc[i])
+
+            state = (ch_array, vstd_array, astd_array, prev_asdt_array)
+            state = tf.expand_dims(state,0)
+
+            tmp = network.evaluation_network(state)
+            action = tf.argmax(tmp[0])
+
+            action_q = action_map[action]
+            env_dict = step(i, action_q, SUB_NUM, ue, b, all_subs, v_array, prev_a_array, current_a_array)
+
+            reward = -w1 * sum(env_dict['energy']) - w2 * sum(env_dict['blackborder'])
+
+            for k, v in env_dict.items():
+                eval_dict[k].append(v)
+            eval_dict['reward'].append(reward)
+
+    avg_ue_e = np.mean(result_dict['energy'], axis=0)
+    # avg_ue_rwd = np.mean(result_dict['reward'], axis=0)
+
     avg_e = sum(result_dict['sum_energy'])/(NUM_EPISODES * n)
+    avg_rwd = sum(result_dict['sum_reward'])/(NUM_EPISODES * n)
 
     rwd_df = pd.DataFrame(total_rwd)
     rolling_mean = rwd_df.rolling(5).mean()
@@ -268,8 +326,83 @@ def run(t, s, ue, plot, result_dir):
     #     plt.show()
     #     # plt.close(fig)
 
+    plot_eval = True
+
+    if plot_eval:
+        eval_dir = result_dir + 'eval/'
+        if not os.path.exists(eval_dir):
+            os.makedirs(eval_dir)
+        for i in range(0, len(eval_dict['x'][0])):
+            fig, ax = plt.subplots()
+            plt.scatter([j for j in range(0,len(eval_dict['x']))], np.array(eval_dict['x'])[:,i], color='C%s'%i)
+            plt.title('Subchannel Allocation User %s' %str(i+1))
+            ax.grid(True)
+            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+            plt.xlabel('Timestep')
+            plt.ylabel('Subchannel')
+            plt.savefig(eval_dir + 'subchannel_allocation_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            # plt.show()
+            plt.close(fig)
+
+        for i in range(0, len(eval_dict['k_coef'][0])):
+            fig, ax = plt.subplots()
+            ax.grid(True)
+            plt.scatter([j for j in range(0,len(eval_dict['k_coef']))], np.array(eval_dict['k_coef'])[:,i], color='C%s'%i)
+            plt.title('K Coefficient User %s' %str(i+1))
+            plt.xlabel('Timestep')
+            plt.ylabel('K Coef')
+            plt.savefig(eval_dir + 'k_coef_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            # plt.show()
+            plt.close(fig)
+
+        for i in range(0, len(eval_dict['overfill'][0])):
+            fig, ax = plt.subplots()
+            ax.grid(True)
+            plt.plot(np.array(eval_dict['overfill'])[:,i], color='C%s'%i)
+            plt.title('Overfilling User %s' %str(i+1))
+            plt.xlabel('Timestep')
+            plt.ylabel('k * v^2 * d^2')
+            plt.savefig(eval_dir + 'overfilling_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            # plt.show()
+            plt.close(fig)
+
+        for i in range(0, len(eval_dict['energy'][0])):
+            fig, ax = plt.subplots()
+            ax.grid(True)
+            plt.plot(np.array(eval_dict['energy'])[:,i], color='C%s'%i)
+            plt.title('Energy Consumption User %s' %str(i+1))
+            plt.xlabel('Timestep')
+            plt.ylabel('Energy (Joule)')
+            plt.savefig(eval_dir + 'energy_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            # plt.show()
+            plt.close(fig)
+
+        for i in range(0, len(eval_dict['blackborder'][0])):
+            fig, ax = plt.subplots()
+            ax.grid(True)
+            plt.plot(np.array(eval_dict['blackborder'])[:,i], color='C%s'%i)
+            plt.title('Black Border User %s' %str(i+1))
+            plt.xlabel('Timestep')
+            plt.ylabel('Black border')
+            plt.savefig(eval_dir + 'blackborder_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            # plt.show()
+            plt.close(fig)
+
+        fig, ax = plt.subplots()
+        plt.plot(np.array(eval_dict['reward']), c='C0')
+        # plt.fill_between([i for i in range(0,len(rwd_df))], rwd_df['std_high'], rwd_df['std_low'], alpha=0.2)
+        plt.title('System Reward UEs=%s RBs=%s' % (nu, SUB_NUM))
+        plt.xlabel('Timestep')
+        plt.ylabel('Reward')
+        plt.savefig(eval_dir + 'reward_ue%s_rb%s.png' %(nu, SUB_NUM))
+        # plt.show()
+        plt.close(fig)
+
 
     if plot:
+        train_dir = result_dir +'train/'
+        if not os.path.exists(train_dir):
+            os.makedirs(train_dir)
         for i in range(0, len(result_dict['x'][0])):
             fig, ax = plt.subplots()
             plt.scatter([j for j in range(0,len(result_dict['x']))], np.array(result_dict['x'])[:,i], color='C%s'%i)
@@ -278,7 +411,7 @@ def run(t, s, ue, plot, result_dir):
             ax.yaxis.set_major_locator(MaxNLocator(integer=True))
             plt.xlabel('Timestep')
             plt.ylabel('Subchannel')
-            plt.savefig(result_dir + 'subchannel_allocation_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.savefig(train_dir + 'subchannel_allocation_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
 
@@ -289,7 +422,7 @@ def run(t, s, ue, plot, result_dir):
             plt.title('K Coefficient User %s' %str(i+1))
             plt.xlabel('Timestep')
             plt.ylabel('K Coef')
-            plt.savefig(result_dir + 'k_coef_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.savefig(train_dir + 'k_coef_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
 
@@ -300,18 +433,18 @@ def run(t, s, ue, plot, result_dir):
             plt.title('Overfilling User %s' %str(i+1))
             plt.xlabel('Timestep')
             plt.ylabel('k * v^2 * d^2')
-            plt.savefig(result_dir + 'overfilling_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.savefig(train_dir + 'overfilling_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
 
-        for i in range(0, len(result_dict['delay_bound'][0])):
+        for i in range(0, len(result_dict['energy'][0])):
             fig, ax = plt.subplots()
             ax.grid(True)
-            plt.plot(ma(np.array(result_dict['delay_bound'])[:,i], n), color='C%s'%i)
-            plt.title('Delay Bound User %s' %str(i+1))
+            plt.plot(ma(np.array(result_dict['energy'])[:,i], n), color='C%s'%i)
+            plt.title('Energy Consumption User %s' %str(i+1))
             plt.xlabel('Timestep')
-            plt.ylabel('Delay Bound')
-            plt.savefig(result_dir + 'delay_bound_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.ylabel('Energy (Joule)')
+            plt.savefig(train_dir + 'energy_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
 
@@ -323,22 +456,21 @@ def run(t, s, ue, plot, result_dir):
             plt.title('Black Border User %s' %str(i+1))
             plt.xlabel('Timestep')
             plt.ylabel('Black border')
-            plt.savefig(result_dir + 'blackborder_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+            plt.savefig(train_dir + 'blackborder_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
             # plt.show()
             plt.close(fig)
 
-
-        # for i in range(0, len(result_dict['L'][0])):
+        # for i in range(0, len(result_dict['nooverfill_perim'][0])):
         #     fig, ax = plt.subplots()
         #     ax.grid(True)
-        #     plt.plot(ma(np.array(result_dict['L'])[:,i], n), color='b', label='Original')
-        #     plt.plot(ma(np.array(result_dict['Li'])[:,i], n), color='C%s'%i, label='Algorithm')
-        #     plt.plot(ma(np.array(result_dict['optimal_area'])[:,i], n), color='r', label='Calculated')
-        #     plt.title('Overfill Area User %s' %str(i+1))
+        #     plt.plot(ma(np.array(result_dict['nooverfill_perim'])[:,i],n), color='b', label='No overfilling')
+        #     plt.plot(ma(np.array(result_dict['algorithm_perim'])[:,i],n), color='C%s'%i, label='Algorithm')
+        #     plt.plot(ma(np.array(result_dict['optimal_perim'])[:,i],n), color='r', label='Optimal')
+        #     plt.title('Overfill Perimeter User %s' %str(i+1))
         #     plt.xlabel('Timestep')
-        #     plt.ylabel('Area (Pixels)')
+        #     plt.ylabel('Perimeter (Pixels)')
         #     plt.legend(loc='upper right')
-        #     plt.savefig(result_dir + 'area_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
+        #     plt.savefig(result_dir + 'perim_rb%s_user%s.png' %(SUB_NUM, str(i+1)))
         #     # plt.show()
         #     plt.close(fig)
 
@@ -348,9 +480,11 @@ def run(t, s, ue, plot, result_dir):
         plt.title('System Reward UEs=%s RBs=%s' % (nu, SUB_NUM))
         plt.xlabel('Episode')
         plt.ylabel('Reward')
-        plt.savefig(result_dir + 'reward_ue%s_rb%s.png' %(nu, SUB_NUM))
+        plt.savefig(train_dir + 'reward_ue%s_rb%s.png' %(nu, SUB_NUM))
         # plt.show()
         plt.close(fig)
-    return avg_e, avg_ue_e
+    return avg_rwd, avg_e
 
-print(run(300, 3, 3, True, 'result/test/'))
+print(run(300, 300, 3, 3, True, 'result/test_eval/'))
+
+# run(EPISODES, TIMESTEP, RB, UE)

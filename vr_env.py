@@ -57,20 +57,6 @@ def robust_overfilling(input_orientation, prediction, input_projection, offset =
 
     # input_projection = [-0.800, 0.720, 0.800, -0.720]
 
-    # 'Enhancement'
-    # # Calculate margin based on genrated area
-    # margin = np.sqrt((p_r-p_l)*(p_t-p_b)*offset)/2
-    # p_l = -(margin+np.sin(yaw_diff))+(input_projection[0]+1)
-    # p_t = margin+np.sin(pitch_diff)+(input_projection[1]-1)
-    # p_r = margin-np.sin(yaw_diff)+(input_projection[2]-1)
-    # p_b = -(margin-np.sin(pitch_diff))+(input_projection[3]+1)
-
-    # 'Enhancement ver 2'
-    # # Get dilation on high velocity
-    # p_r = max(p_r*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_r*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
-    # p_l = min(p_l*(np.sin(abs(yaw_diff))*(fixed_param-1)+1),p_l*(np.sin(abs(pitch_diff))*(fixed_param-1)+1))
-    # p_t = max(p_t*(np.sin(abs(pitch_diff))*(fixed_param-1)+1),p_t*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
-    # p_b = min(p_b*(np.sin(abs(pitch_diff))*(fixed_param-1)+1), p_b*(np.sin(abs(yaw_diff))*(fixed_param-1)+1))
     return [-np.abs(p_l),np.abs(p_t),np.abs(p_r),-np.abs(p_b)]
 
     # area = 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
@@ -103,7 +89,7 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
     lmd = 1                              # L/r < d coefficient
     Pl = 10 * 10**-5                     # local computing power
     Po = 0.1 * 10**-5	                 # offload computing power
-    k_coef = [1000, 2000, 3000, 4000, 5000]      # range [10,50,100,200,300]ms  
+    k_coef = [100, 200, 300, 400, 500]      # range [10,50,100,200,300]ms
 
     k = [k_coef[action[i]] for i in range(0,len(action)) if i%2]               # playout delay
     sub = np.array([action[i] for i in range(0,len(action)) if not i%2])    # allocated sub-carriers
@@ -115,13 +101,19 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
     i = 0
 
     for s, n in zip(sub, sorter):  # outer loop to compute the system wide weighted sum data rate
+        prediction = [current_a_array[i], current_a_array[i+1], current_a_array[i+2]]
+        input_orientation = [prev_a_array[i], prev_a_array[i+1], prev_a_array[i+2]]
+        opt_coor = robust_overfilling(input_orientation , prediction, input_projection)
         if s == 0:
             r = wi[n]*rl
             e = Pl * L
+            # print('e loc : %s' % e)
             ovf = 0
             d_bound = 0
             Li = L
-            bb = 0.3
+            bb_coor = np.abs(np.abs(input_projection) - np.abs(opt_coor))
+            bb = np.sum(bb_coor)
+            # print('Local bb : %s '%bb)
         else:
             # Energy Consumption Calculation
             cur_sub = np.array(all_sub[s-1])  # we use s-1 because our sub-carrier array counts from zero
@@ -139,10 +131,10 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
                     else:
                         noise = noise+0.0
             signal_to_noise = s_power/noise
-            # print(signal_to_noise)
             e2 = math.log(1+signal_to_noise)
             ro = b * e2/e1
             r = wi[n]*ro
+
             ovf = k[n] * v[n]**2 * d**2
             Li = L * (1 + ovf)
             d_bound = (Li / r) - d
@@ -150,26 +142,28 @@ def step(ind, action, subN, ue, band, all_sub, v_array, prev_a_array, current_a_
             e = Po * Li + lmd * d_bound
 
             # Black border Calculation
-            prediction = [current_a_array[i], current_a_array[i+1], current_a_array[i+2]]
-            input_orientation = [prev_a_array[i], prev_a_array[i+1], prev_a_array[i+2]]
-            opt_coor = robust_overfilling(input_orientation , prediction, input_projection)
             alg_coor = np.array(input_projection) * (1 + ovf)
             bb_coor = np.abs(opt_coor) - np.abs(alg_coor)
             bb_coor = np.clip(bb_coor, 0, None)
-            bb = np.mean(bb_coor)
-                # print('k : %s'%k[n])
-                # print('Optimal : %s'%opt_coor)
-                # print('Algorithm : %s'%alg_coor)
+            bb = np.sum(bb_coor)
+            # print('Offload bb : %s '%bb)
+
+            opt_perim = (opt_coor[2] - opt_coor[0] + opt_coor[1] - opt_coor[3]) * 2
+            alg_perim = (alg_coor[2] - alg_coor[0] + alg_coor[1] - alg_coor[3]) * 2
+            noovf_perim = (input_projection[2] - input_projection[0] + input_projection[1] - input_projection[3]) * 2
+            # print('k user %s: %s'%(n+1,k[n]))
+            # print('v : %s'%v[n])
+            # print('Optimal : %s'%opt_coor)
+            # print('Algorithm : %s'%alg_coor)
         i+=1
         out_dict['x'].append(s)         
         out_dict['rate'].append(r)      # transmission rate
         out_dict['energy'].append(e)      # energy consumption
         out_dict['overfill'].append(ovf)
         out_dict['k_coef'].append(k[n])
-        out_dict['delay_bound'].append(d_bound)
-        # out_dict['optimal_area'].append(opt_area)
-        out_dict['overfill_area'].append(Li)
+        # out_dict['delay_bound'].append(d_bound)
+        # out_dict['optimal_perim'].append(opt_perim)
+        # out_dict['algorithm_perim'].append(alg_perim)
+        # out_dict['nooverfill_perim'].append(noovf_perim)
         out_dict['blackborder'].append(bb)
-        out_dict['L'].append(L)
-        out_dict['Li'].append(Li)
     return out_dict

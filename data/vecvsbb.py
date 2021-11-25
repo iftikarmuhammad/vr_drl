@@ -24,6 +24,11 @@ vec_df = vec_df.clip(-4,4)
 #     plt.savefig('../result/bb_angularvec_video%s_user%s_np.png' %(3, str(i+1)))
 #     plt.show()
 
+# median = vec_df.loc[(vec_df[user]<4) & vec_df[user] >-4, user].median()
+# vec_df[user] = vec_df[user].mask(vec_df[user]>4, median)
+# vec_df[user] = vec_df[user].mask(vec_df[user]<-4, median)
+# vec_df[user] = scaler.fit_transform(vec_df[user].values.reshape(-1,1))
+
 # with absolute value and polyfit
 for i in range(0,3):
     user = 'user%s'%str(i+1)
@@ -44,11 +49,11 @@ for i in range(0,3):
     x = np.arange(x2,step=0.1)
     plt.plot(x, lin_f(x), color='r', label='Linear regression')
     plt.plot(x, quad_f(x), color='b', label='Quadratic regression')
-    # if i!=2:
-    #     plt.axis((0,2,y1,y2))
+    if i!=2:
+        plt.axis((0,100,y1,y2))
     plt.title('Blackborder vs Angular Velocity User %s' %str(i+1))
     plt.ylabel('Blackborder Pct (%)')
-    plt.xlabel('Angular Velocity (rad/s)')
+    plt.xlabel('Angular Velocity (deg/s)')
     plt.legend(loc='upper right')
     plt.savefig('../result/bb_angularvec_video%s_user%s_np.png' %(3, str(i+1)))
     plt.show()

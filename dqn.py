@@ -66,20 +66,17 @@ class DeepQNetwork(Model):
         with tf.GradientTape() as tape:
             q_eval_arr = self.evaluation_network(states)
             q_eval = tf.reduce_max(q_eval_arr,axis=1)
-            # print("q_eval: {}".format(q_eval))
             if self.enable_DDQN == True:
                 # Double Deep Q-Network
                 q_values = self.evaluation_network(nextStates)
                 q_values_actions = tf.argmax(q_values,axis=1)
                 target_q_values = self.target_network(nextStates)
-                self.target_network.summary()
                 # discount_factor = target_q_values[range(self.batch_size),q_values_actions]
                 indice = tf.stack([range(self.batch_size),q_values_actions],axis=1)
                 discount_factor = tf.gather_nd(target_q_values,indice)
             else:
                 # Deep Q-Network
                 target_q_values = self.target_network(nextStates)
-                # print(target_q_values)
                 discount_factor = tf.reduce_max(target_q_values,axis=1)
             
             # Q function
@@ -120,15 +117,12 @@ class DeepQNetwork(Model):
         import matplotlib.pyplot as plt
         import matplotlib as mpl
         mpl.style.use('fivethirtyeight')
-#        fileName = "TrainingLossFn_"+str(s)
         fig, ax = plt.subplots(figsize=(10, 10))
-        # fig.patch.set_facecolor('w')
         ax.set_facecolor('w')
         fig.set_facecolor('w')
         ax.grid(True)
         plt.plot(np.arange(len(self.training_loss)), self.training_loss)
         plt.ylabel('Training loss of DNN', fontsize=20)
         plt.xlabel('Learning steps', fontsize=20)
-#        plt.savefig(fileName+'TrainingLossFn_10.png', facecolor=fig.get_facecolor(), alpha=0.01)
         plt.savefig('TrainingLossFn_5.png', facecolor=fig.get_facecolor(), alpha=0.01)
         plt.show()
